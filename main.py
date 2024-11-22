@@ -5,8 +5,8 @@
 
 
 from stable_baselines3 import DQN
-from environments.pokemon_env import PokemonEnv
-from models.train_model import train_model
+from Environments.pokemon_env import PokemonEnv
+from Models.train_model import train_model
 
 def evaluate_model():
     """Evaluate a trained model."""
