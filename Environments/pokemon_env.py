@@ -8,7 +8,7 @@ from collections import deque
 class PokemonEnv(Env):
     def __init__(self):
         super().__init__()
-        self.env = retro.make(game="PokemonRed-GameBoy")
+        self.env = retro.make(game="PokemonEmerald-GBA")
         # Observation space (stacked frames)
         self.observation_space = Box(low=0, high=1, shape=(4, 84, 84), dtype=np.float32)
         # Action space
@@ -63,25 +63,16 @@ class PokemonEnv(Env):
 
         return stacked_obs, reward, done, info
 
-    def reset(self):
-        """
-        Resets the environment and initializes the frame stack.
-        """
+    def reset(self): # Resets the environment and initializes the frame stack
         obs = self.env.reset()
         preprocessed_frame = self.preprocess_frame(obs)
         stacked_obs = self.stack_frames(preprocessed_frame)
         return stacked_obs
 
-    def render(self, mode="human"):
-        """
-        Renders the environment.
-        """
+    def render(self, mode="human"): # Renders the environment
         self.env.render()
 
-    def close(self):
-        """
-        Closes the environment.
-        """
+    def close(self): # Closes the environment
         self.env.close()
 
     # Reward system
@@ -108,8 +99,8 @@ class PokemonEnv(Env):
         if info.get("player_health", 100) > 80:
             reward += 2
 
-        # Small penalty for every step
-        reward -= 0.1
+        # Small penalty for every step to optimize paths
+        reward -= 0.05
 
         return reward
 
