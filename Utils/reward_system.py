@@ -43,6 +43,6 @@ def calculate_reward(info):
         reward += 2  # Small positive reinforcement for staying healthy
 
     # Ensure a small penalty for every step to encourage efficiency
-    reward -= 0.1  # Small penalty for each step taken
+    reward -= 0.05  # Small penalty for each step taken
 
     return reward
