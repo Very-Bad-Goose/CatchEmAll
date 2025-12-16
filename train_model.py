@@ -3,7 +3,7 @@ import argparse
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
-from pokemon_firered_env import PokemonFireRedEnv
+from pokemon_env import PokemonFireRedEnv
 
 def train_model(algorithm="DQN", total_timesteps=1000000):
     """Train the Pokemon AI model."""

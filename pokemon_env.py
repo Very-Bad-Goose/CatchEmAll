@@ -1,21 +1,35 @@
-import retro
+import stable_retro as retro
 import numpy as np
 import cv2
-from gym import Env
-from gym.spaces import Box, Discrete
+from gymnasium import Env
+from gymnasium.spaces import Box, Discrete
 from collections import deque
 
 class PokemonFireRedEnv(Env):
     def __init__(self):
         super().__init__()
-        # Use FireRed instead of Emerald
-        self.env = retro.make(game="PokemonFireRed-GBA")
+        # Use stable-retro instead of gym-retro
+        self.env = retro.make(
+            game="PokemonFireRed-GBA",
+            use_restricted_actions=retro.Actions.FILTERED
+        )
         
         # Observation space (stacked frames)
         self.observation_space = Box(low=0, high=1, shape=(4, 84, 84), dtype=np.float32)
         
-        # Action space
-        self.action_space = Discrete(self.env.action_space.n)
+        # Action space - reduced to essential buttons
+        # Buttons: B, A, SELECT, START, UP, DOWN, LEFT, RIGHT, L, R
+        self.action_space = Discrete(8)  # Simplified action space
+        self.button_map = {
+            0: [0, 0, 0, 0, 0, 0, 0, 0],  # No-op
+            1: [1, 0, 0, 0, 0, 0, 0, 0],  # B
+            2: [0, 1, 0, 0, 0, 0, 0, 0],  # A
+            3: [0, 0, 0, 0, 1, 0, 0, 0],  # UP
+            4: [0, 0, 0, 0, 0, 1, 0, 0],  # DOWN
+            5: [0, 0, 0, 0, 0, 0, 1, 0],  # LEFT
+            6: [0, 0, 0, 0, 0, 0, 0, 1],  # RIGHT
+            7: [0, 0, 0, 1, 0, 0, 0, 0],  # START
+        }
         
         # Frame stack
         self.frame_stack = deque(maxlen=4)
@@ -24,6 +38,8 @@ class PokemonFireRedEnv(Env):
         self.last_area = None
         self.idle_counter = 0
         self.last_opponent_hp = None
+        self.last_badges = 0
+        self.step_count = 0
 
     def preprocess_frame(self, frame):
         """Preprocesses the game frame."""
@@ -38,78 +54,104 @@ class PokemonFireRedEnv(Env):
             self.frame_stack.extend([frame] * 4)
         else:
             self.frame_stack.append(frame)
-        return np.array(self.frame_stack)
+        return np.array(self.frame_stack, dtype=np.float32)
 
     def read_u16(self, ram, addr):
         """Read 16-bit value from RAM (little endian)."""
-        return ram[addr] | (ram[addr + 1] << 8)
+        try:
+            return ram[addr] | (ram[addr + 1] << 8)
+        except:
+            return 0
     
     def read_u32(self, ram, addr):
         """Read 32-bit value from RAM (little endian)."""
-        return (ram[addr] | (ram[addr + 1] << 8) | 
-                (ram[addr + 2] << 16) | (ram[addr + 3] << 24))
+        try:
+            return (ram[addr] | (ram[addr + 1] << 8) | 
+                    (ram[addr + 2] << 16) | (ram[addr + 3] << 24))
+        except:
+            return 0
     
     # FireRed-specific memory addresses
     def in_battle(self):
         """Check if currently in battle."""
-        ram = self.env.get_ram()
-        # FireRed battle flag address
-        return ram[0x02022B4C] != 0
+        try:
+            ram = self.env.get_ram()
+            # FireRed battle flag address - may need adjustment
+            return ram[0x2022B4C & 0xFFFF] != 0
+        except:
+            return False
     
     def get_player_health(self):
         """Get player's current Pokemon HP."""
-        ram = self.env.get_ram()
-        # FireRed player HP addresses
-        cur_hp = self.read_u16(ram, 0x02024284)
-        max_hp = self.read_u16(ram, 0x02024286)
-        return cur_hp, max_hp
-    
+        try:
+            ram = self.env.get_ram()
+            # FireRed player HP addresses
+            cur_hp = self.read_u16(ram, 0x024284 & 0xFFFF)
+            max_hp = self.read_u16(ram, 0x024286 & 0xFFFF)
+            return cur_hp, max_hp
+        except:
+            return 0, 1
+
     def get_opponent_health(self):
         """Get opponent's current Pokemon HP."""
-        ram = self.env.get_ram()
-        # FireRed opponent HP addresses
-        cur_hp = self.read_u16(ram, 0x02024744)
-        max_hp = self.read_u16(ram, 0x02024746)
-        return cur_hp, max_hp
+        try:
+            ram = self.env.get_ram()
+            # FireRed opponent HP addresses
+            cur_hp = self.read_u16(ram, 0x024744 & 0xFFFF)
+            max_hp = self.read_u16(ram, 0x024746 & 0xFFFF)
+            return cur_hp, max_hp
+        except:
+            return 0, 1
 
     def get_badges(self):
         """Get number of badges earned."""
-        ram = self.env.get_ram()
-        # FireRed badges byte
-        badges_byte = ram[0x020244E8]
-        return bin(badges_byte).count('1')
+        try:
+            ram = self.env.get_ram()
+            # FireRed badges byte
+            badges_byte = ram[0x0244E8 & 0xFFFF]
+            return bin(badges_byte).count('1')
+        except:
+            return 0
     
     def get_party_size(self):
         """Get number of Pokemon in party."""
-        ram = self.env.get_ram()
-        return ram[0x02024284]
+        try:
+            ram = self.env.get_ram()
+            return ram[0x024284 & 0xFFFF]
+        except:
+            return 0
     
     def get_money(self):
         """Get player money."""
-        ram = self.env.get_ram()
-        return self.read_u32(ram, 0x0202494C)
+        try:
+            ram = self.env.get_ram()
+            return self.read_u32(ram, 0x02494C & 0xFFFF)
+        except:
+            return 0
 
     def check_battle_won(self):
         """Check if battle was just won."""
         if not self.in_battle():
-            # If we just left battle and opponent HP was 0
             if self.last_opponent_hp is not None and self.last_opponent_hp == 0:
                 return True
         return False
 
     def check_new_area(self):
         """Check if player entered a new area."""
-        ram = self.env.get_ram()
-        # FireRed map bank and map number
-        current_area = (ram[0x02036DFC], ram[0x02036DFD])
-        
-        if self.last_area is None:
+        try:
+            ram = self.env.get_ram()
+            # FireRed map bank and map number
+            current_area = (ram[0x036DFC & 0xFFFF], ram[0x036DFD & 0xFFFF])
+            
+            if self.last_area is None:
+                self.last_area = current_area
+                return False
+            
+            changed = current_area != self.last_area
             self.last_area = current_area
+            return changed
+        except:
             return False
-        
-        changed = current_area != self.last_area
-        self.last_area = current_area
-        return changed
 
     def calculate_idle_time(self, new_area, opponent_defeated):
         """Track idle time (no progress)."""
@@ -151,11 +193,18 @@ class PokemonFireRedEnv(Env):
         if idle_time > 100:
             reward -= 0.1
 
+        # Time penalty to encourage efficiency
+        reward -= 0.01
+
         return reward
 
     def step(self, action):
         """Execute action and return observation."""
-        obs, _, done, info = self.env.step(action)
+        # Convert simplified action to button array
+        buttons = self.button_map.get(action, self.button_map[0])
+        
+        obs, _, terminated, truncated, info = self.env.step(buttons)
+        done = terminated or truncated
         
         # Preprocess frame
         preprocessed_frame = self.preprocess_frame(obs)
@@ -173,8 +222,6 @@ class PokemonFireRedEnv(Env):
         info["party_size"] = self.get_party_size()
         
         # Check for badge earned
-        if not hasattr(self, "last_badges"):
-            self.last_badges = info["badges"]
         info["badge_earned"] = info["badges"] > self.last_badges
         self.last_badges = info["badges"]
         
@@ -187,11 +234,19 @@ class PokemonFireRedEnv(Env):
         # Custom reward
         reward = self.calculate_reward(info)
         
-        return stacked_obs, reward, done, info
+        self.step_count += 1
+        
+        # Auto-reset after too many steps
+        if self.step_count > 10000:
+            done = True
+        
+        return stacked_obs, reward, done, False, info
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
         """Reset the environment."""
-        obs = self.env.reset()
+        super().reset(seed=seed)
+        obs, info = self.env.reset()
+        
         preprocessed_frame = self.preprocess_frame(obs)
         
         # Clear frame stack
@@ -203,12 +258,13 @@ class PokemonFireRedEnv(Env):
         self.idle_counter = 0
         self.last_opponent_hp = None
         self.last_badges = 0
+        self.step_count = 0
         
-        return stacked_obs
+        return stacked_obs, info
 
-    def render(self, mode="human"):
+    def render(self):
         """Render the environment."""
-        self.env.render()
+        return self.env.render()
 
     def close(self):
         """Close the environment."""
