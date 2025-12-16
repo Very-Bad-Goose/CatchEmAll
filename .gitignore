@@ -1,0 +1,6 @@
+# Python virtual environment
+pokeEnv/
+
+# Spyder IDE project files
+.spyproject/
+
