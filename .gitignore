@@ -1,7 +1,9 @@
 # Python virtual environment
 pokeEnv/
-myba/
+mgba/
 __pycache__
+
+
 
 # Spyder IDE project files
 .spyproject/

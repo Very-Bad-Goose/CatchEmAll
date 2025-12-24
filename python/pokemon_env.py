@@ -1,271 +1,339 @@
-import stable_retro as retro
+import json
 import numpy as np
 import cv2
 from gymnasium import Env
 from gymnasium.spaces import Box, Discrete
 from collections import deque
+import time
+import os
 
-class PokemonFireRedEnv(Env):
-    def __init__(self):
+class MGBAFireRedEnv(Env):
+    """Pokemon FireRed environment using mGBA via file communication."""
+    
+    def __init__(self, state_file="mgba_state.txt", action_file="mgba_action.txt"):
         super().__init__()
-        # Use stable-retro instead of gym-retro
-        self.env = retro.make(
-            game="PokemonFireRed-GBA",
-            use_restricted_actions=retro.Actions.FILTERED
-        )
+        
+        self.state_file = state_file
+        self.action_file = action_file
         
         # Observation space (stacked frames)
         self.observation_space = Box(low=0, high=1, shape=(4, 84, 84), dtype=np.float32)
         
-        # Action space - reduced to essential buttons
-        # Buttons: B, A, SELECT, START, UP, DOWN, LEFT, RIGHT, L, R
-        self.action_space = Discrete(8)  # Simplified action space
-        self.button_map = {
-            0: [0, 0, 0, 0, 0, 0, 0, 0],  # No-op
-            1: [1, 0, 0, 0, 0, 0, 0, 0],  # B
-            2: [0, 1, 0, 0, 0, 0, 0, 0],  # A
-            3: [0, 0, 0, 0, 1, 0, 0, 0],  # UP
-            4: [0, 0, 0, 0, 0, 1, 0, 0],  # DOWN
-            5: [0, 0, 0, 0, 0, 0, 1, 0],  # LEFT
-            6: [0, 0, 0, 0, 0, 0, 0, 1],  # RIGHT
-            7: [0, 0, 0, 1, 0, 0, 0, 0],  # START
-        }
+        # Action space
+        self.action_space = Discrete(9)
+        self.actions = ["NONE", "A", "B", "UP", "DOWN", "LEFT", "RIGHT", "START", "SELECT"]
         
         # Frame stack
         self.frame_stack = deque(maxlen=4)
         
-        # Tracking variables
-        self.last_area = None
-        self.idle_counter = 0
-        self.last_opponent_hp = None
-        self.last_badges = 0
+        # Tracking
+        self.prev_state = None
         self.step_count = 0
-
+        
+        print("="*60)
+        print("mGBA FireRed Environment (File-based)")
+        print("="*60)
+        print("Waiting for mGBA to start...")
+        print("1. Open mGBA")
+        print("2. Load Pokemon FireRed ROM")
+        print("3. Tools → Scripting → File → Load mgba_firered.lua")
+        print("="*60)
+        
+        # Wait for first state file
+        self._wait_for_mgba()
+    
+    def _wait_for_mgba(self, timeout=30):
+        """Wait for mGBA to create state file."""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if os.path.exists(self.state_file):
+                print("✓ mGBA detected!")
+                time.sleep(0.5)  # Let it stabilize
+                return
+            time.sleep(0.5)
+            if int(time.time() - start_time) % 5 == 0:
+                print(f"Still waiting... ({int(time.time() - start_time)}s)")
+        
+        raise Exception(f"mGBA not detected after {timeout}s. Is the Lua script loaded?")
+    
+    def _read_state(self):
+        """Read game state from file."""
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                if not os.path.exists(self.state_file):
+                    time.sleep(0.01)
+                    continue
+                
+                with open(self.state_file, 'r') as f:
+                    data = f.read().strip()
+                
+                if not data:
+                    time.sleep(0.01)
+                    continue
+                
+                state = json.loads(data)
+                return state
+            
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                if attempt < max_attempts - 1:
+                    time.sleep(0.01)
+                    continue
+                else:
+                    # Return previous state if available
+                    if self.prev_state:
+                        return self.prev_state
+                    # Otherwise return safe defaults
+                    return {
+                        'in_battle': 0,
+                        'player_hp': 100,
+                        'player_hp_max': 100,
+                        'opp_hp': 0,
+                        'opp_hp_max': 1,
+                        'map_group': 0,
+                        'map_num': 0,
+                        'badges': 0
+                    }
+        
+        return self.prev_state or {
+            'in_battle': 0, 'player_hp': 100, 'player_hp_max': 100,
+            'opp_hp': 0, 'opp_hp_max': 1, 'map_group': 0, 'map_num': 0, 'badges': 0
+        }
+    
+    def _write_action(self, action):
+        """Write action to file for mGBA."""
+        action_str = self.actions[action]
+        try:
+            with open(self.action_file, 'w') as f:
+                f.write(action_str)
+        except Exception as e:
+            print(f"Error writing action: {e}")
+    
+    def _create_frame_from_state(self, state):
+        """Create a visual frame from game state."""
+        # Create base frame
+        frame = np.zeros((240, 160, 3), dtype=np.uint8)
+        
+        # Background color based on map
+        map_seed = state['map_group'] * 100 + state['map_num']
+        np.random.seed(map_seed)
+        bg_color = np.random.randint(30, 100, 3)
+        frame[:] = bg_color
+        
+        # HP bar (green)
+        if state['player_hp_max'] > 0:
+            hp_ratio = min(state['player_hp'] / state['player_hp_max'], 1.0)
+            bar_width = int(140 * hp_ratio)
+            cv2.rectangle(frame, (10, 10), (10 + bar_width, 30), (0, 255, 0), -1)
+            cv2.rectangle(frame, (10, 10), (150, 30), (255, 255, 255), 2)
+        
+        # Battle indicator (red box)
+        if state['in_battle'] > 0:
+            cv2.rectangle(frame, (50, 90), (110, 150), (255, 0, 0), -1)
+            cv2.putText(frame, "BATTLE", (55, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+            # Opponent HP
+            if state['opp_hp_max'] > 0:
+                opp_hp_ratio = min(state['opp_hp'] / state['opp_hp_max'], 1.0)
+                opp_bar_width = int(140 * opp_hp_ratio)
+                cv2.rectangle(frame, (10, 50), (10 + opp_bar_width, 70), (255, 0, 0), -1)
+                cv2.rectangle(frame, (10, 50), (150, 70), (255, 255, 255), 2)
+        
+        # Badge count
+        cv2.putText(frame, f"Badges: {state['badges']}", (10, 220), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        return frame
+    
     def preprocess_frame(self, frame):
-        """Preprocesses the game frame."""
+        """Preprocess frame."""
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         resized = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_AREA)
         normalized = resized / 255.0
         return normalized
-
+    
     def stack_frames(self, frame):
-        """Stacks the latest frame with previous frames."""
+        """Stack frames."""
         if len(self.frame_stack) == 0:
-            self.frame_stack.extend([frame] * 4)
+            for _ in range(4):
+                self.frame_stack.append(frame)
         else:
             self.frame_stack.append(frame)
         return np.array(self.frame_stack, dtype=np.float32)
-
-    def read_u16(self, ram, addr):
-        """Read 16-bit value from RAM (little endian)."""
-        try:
-            return ram[addr] | (ram[addr + 1] << 8)
-        except:
-            return 0
     
-    def read_u32(self, ram, addr):
-        """Read 32-bit value from RAM (little endian)."""
-        try:
-            return (ram[addr] | (ram[addr + 1] << 8) | 
-                    (ram[addr + 2] << 16) | (ram[addr + 3] << 24))
-        except:
-            return 0
-    
-    # FireRed-specific memory addresses
-    def in_battle(self):
-        """Check if currently in battle."""
-        try:
-            ram = self.env.get_ram()
-            # FireRed battle flag address - may need adjustment
-            return ram[0x2022B4C & 0xFFFF] != 0
-        except:
-            return False
-    
-    def get_player_health(self):
-        """Get player's current Pokemon HP."""
-        try:
-            ram = self.env.get_ram()
-            # FireRed player HP addresses
-            cur_hp = self.read_u16(ram, 0x024284 & 0xFFFF)
-            max_hp = self.read_u16(ram, 0x024286 & 0xFFFF)
-            return cur_hp, max_hp
-        except:
-            return 0, 1
-
-    def get_opponent_health(self):
-        """Get opponent's current Pokemon HP."""
-        try:
-            ram = self.env.get_ram()
-            # FireRed opponent HP addresses
-            cur_hp = self.read_u16(ram, 0x024744 & 0xFFFF)
-            max_hp = self.read_u16(ram, 0x024746 & 0xFFFF)
-            return cur_hp, max_hp
-        except:
-            return 0, 1
-
-    def get_badges(self):
-        """Get number of badges earned."""
-        try:
-            ram = self.env.get_ram()
-            # FireRed badges byte
-            badges_byte = ram[0x0244E8 & 0xFFFF]
-            return bin(badges_byte).count('1')
-        except:
-            return 0
-    
-    def get_party_size(self):
-        """Get number of Pokemon in party."""
-        try:
-            ram = self.env.get_ram()
-            return ram[0x024284 & 0xFFFF]
-        except:
-            return 0
-    
-    def get_money(self):
-        """Get player money."""
-        try:
-            ram = self.env.get_ram()
-            return self.read_u32(ram, 0x02494C & 0xFFFF)
-        except:
-            return 0
-
-    def check_battle_won(self):
-        """Check if battle was just won."""
-        if not self.in_battle():
-            if self.last_opponent_hp is not None and self.last_opponent_hp == 0:
-                return True
-        return False
-
-    def check_new_area(self):
-        """Check if player entered a new area."""
-        try:
-            ram = self.env.get_ram()
-            # FireRed map bank and map number
-            current_area = (ram[0x036DFC & 0xFFFF], ram[0x036DFD & 0xFFFF])
+    def calculate_reward(self, state):
+        """Calculate reward from game state."""
+        if not self.prev_state:
+            return 0.0
+        
+        reward = 0.0
+        
+        # Badge reward (HUGE)
+        if state['badges'] > self.prev_state.get('badges', 0):
+            reward += 1000
+            print(f"🎖️  BADGE EARNED! Total: {state['badges']}/8")
+        
+        # Battle rewards
+        if state['in_battle'] > 0 and state['opp_hp_max'] > 0:
+            # Damage dealt
+            prev_opp_hp = self.prev_state.get('opp_hp', state['opp_hp_max'])
+            opp_damage = prev_opp_hp - state['opp_hp']
+            if opp_damage > 0:
+                reward += opp_damage * 0.5
             
-            if self.last_area is None:
-                self.last_area = current_area
-                return False
+            # Defeated opponent
+            if prev_opp_hp > 0 and state['opp_hp'] == 0:
+                reward += 100
+                print("💥 Opponent defeated!")
+        
+        # Damage taken penalty
+        if state['player_hp_max'] > 0:
+            prev_player_hp = self.prev_state.get('player_hp', state['player_hp_max'])
+            player_damage = prev_player_hp - state['player_hp']
+            if player_damage > 0:
+                reward -= player_damage * 0.3
             
-            changed = current_area != self.last_area
-            self.last_area = current_area
-            return changed
-        except:
-            return False
-
-    def calculate_idle_time(self, new_area, opponent_defeated):
-        """Track idle time (no progress)."""
-        if new_area or opponent_defeated:
-            self.idle_counter = 0
-        else:
-            self.idle_counter += 1
-        return self.idle_counter
-
-    def calculate_reward(self, info):
-        """Calculate reward based on game state."""
-        reward = 0
-
-        # Major achievements
-        if info.get("battle_won"):
-            reward += 100
+            # Fainted
+            if state['player_hp'] == 0 and prev_player_hp > 0:
+                reward -= 50
+                print("💀 Pokemon fainted!")
         
-        if info.get("badge_earned"):
-            reward += 500
+        # Map change (exploration)
+        prev_map = (self.prev_state.get('map_group', 0), self.prev_state.get('map_num', 0))
+        curr_map = (state['map_group'], state['map_num'])
+        if curr_map != prev_map and curr_map != (0, 0):
+            reward += 5
+            print(f"📍 New area: Group {curr_map[0]}, Map {curr_map[1]}")
         
-        if info.get("new_area_reached"):
-            reward += 10
-
-        # Battle rewards (damage dealing)
-        if self.in_battle():
-            opp_hp, opp_max = self.get_opponent_health()
-            if opp_max > 0:
-                damage_fraction = 1 - (opp_hp / opp_max)
-                reward += damage_fraction * 5
-        
-        # Health penalty (losing health)
-        player_hp, player_max = self.get_player_health()
-        if player_max > 0 and player_hp < player_max:
-            health_loss = (player_max - player_hp) / player_max
-            reward -= health_loss * 3
-
-        # Idle penalty (to encourage exploration)
-        idle_time = info.get("idle_time", 0)
-        if idle_time > 100:
-            reward -= 0.1
-
-        # Time penalty to encourage efficiency
+        # Small time penalty
         reward -= 0.01
-
+        
         return reward
-
+    
     def step(self, action):
-        """Execute action and return observation."""
-        # Convert simplified action to button array
-        buttons = self.button_map.get(action, self.button_map[0])
+        """Execute one step."""
+        # Write action
+        self._write_action(action)
         
-        obs, _, terminated, truncated, info = self.env.step(buttons)
-        done = terminated or truncated
+        # Wait a bit for mGBA to process
+        time.sleep(0.016)  # ~60 FPS
         
-        # Preprocess frame
-        preprocessed_frame = self.preprocess_frame(obs)
-        stacked_obs = self.stack_frames(preprocessed_frame)
+        # Read new state
+        state = self._read_state()
         
-        # Track opponent HP for battle win detection
-        if self.in_battle():
-            self.last_opponent_hp, _ = self.get_opponent_health()
+        # Create visual frame
+        frame = self._create_frame_from_state(state)
+        preprocessed = self.preprocess_frame(frame)
+        stacked_obs = self.stack_frames(preprocessed)
         
-        # Gather game state info
-        info["in_battle"] = self.in_battle()
-        info["battle_won"] = self.check_battle_won()
-        info["new_area_reached"] = self.check_new_area()
-        info["badges"] = self.get_badges()
-        info["party_size"] = self.get_party_size()
+        # Calculate reward
+        reward = self.calculate_reward(state)
         
-        # Check for badge earned
-        info["badge_earned"] = info["badges"] > self.last_badges
-        self.last_badges = info["badges"]
-        
-        # Calculate idle time
-        info["idle_time"] = self.calculate_idle_time(
-            info["new_area_reached"], 
-            info.get("battle_won", False)
-        )
-        
-        # Custom reward
-        reward = self.calculate_reward(info)
-        
+        # Update tracking
+        self.prev_state = state
         self.step_count += 1
         
-        # Auto-reset after too many steps
-        if self.step_count > 10000:
-            done = True
+        # Episode termination
+        done = self.step_count >= 10000
+        
+        info = {
+            'in_battle': state['in_battle'],
+            'player_hp': state['player_hp'],
+            'player_hp_max': state['player_hp_max'],
+            'opp_hp': state['opp_hp'],
+            'badges': state['badges'],
+            'map': (state['map_group'], state['map_num']),
+            'step_count': self.step_count
+        }
         
         return stacked_obs, reward, done, False, info
-
+    
     def reset(self, seed=None, options=None):
-        """Reset the environment."""
-        super().reset(seed=seed)
-        obs, info = self.env.reset()
+        """Reset environment."""
+        if seed is not None:
+            super().reset(seed=seed)
         
-        preprocessed_frame = self.preprocess_frame(obs)
+        # Just clear our tracking (mGBA stays running)
+        self.step_count = 0
+        
+        # Read initial state
+        state = self._read_state()
+        
+        # Create initial frame
+        frame = self._create_frame_from_state(state)
         
         # Clear frame stack
         self.frame_stack.clear()
-        stacked_obs = self.stack_frames(preprocessed_frame)
+        preprocessed = self.preprocess_frame(frame)
+        stacked_obs = self.stack_frames(preprocessed)
         
-        # Reset tracking variables
-        self.last_area = None
-        self.idle_counter = 0
-        self.last_opponent_hp = None
-        self.last_badges = 0
-        self.step_count = 0
+        # Initialize tracking
+        self.prev_state = state
+        
+        info = {
+            'player_hp': state['player_hp'],
+            'badges': state['badges'],
+            'map': (state['map_group'], state['map_num'])
+        }
         
         return stacked_obs, info
-
-    def render(self):
-        """Render the environment."""
-        return self.env.render()
-
+    
     def close(self):
-        """Close the environment."""
-        self.env.close()
+        """Cleanup."""
+        # Clean up files
+        try:
+            if os.path.exists(self.state_file):
+                os.remove(self.state_file)
+            if os.path.exists(self.action_file):
+                os.remove(self.action_file)
+        except:
+            pass
+        print("Environment closed")
+
+
+# Test function
+def test_env():
+    """Test the environment."""
+    print("\nTesting mGBA FireRed Environment...")
+    print("-" * 60)
+    
+    try:
+        env = MGBAFireRedEnv()
+        
+        print("\nResetting environment...")
+        obs, info = env.reset()
+        print(f"✓ Reset successful")
+        print(f"  Observation shape: {obs.shape}")
+        print(f"  Initial HP: {info['player_hp']}")
+        print(f"  Initial Badges: {info['badges']}")
+        print(f"  Initial Map: {info['map']}")
+        
+        print("\nTaking 50 random actions...")
+        for i in range(50):
+            action = env.action_space.sample()
+            obs, reward, done, _, info = env.step(action)
+            
+            if i % 10 == 0 or reward != -0.01:  # Only print interesting steps
+                print(f"Step {i+1}: Action={env.actions[action]:<6} "
+                      f"Reward={reward:>7.2f} "
+                      f"HP={info['player_hp']:>3}/{info['player_hp_max']:<3} "
+                      f"Badges={info['badges']} "
+                      f"Battle={'Yes' if info['in_battle'] else 'No'}")
+            
+            if done:
+                print("Episode done!")
+                break
+        
+        env.close()
+        print("\n✓ Test completed successfully!")
+        print("\nNow you can train with:")
+        print("  python train_model.py --train --algorithm DQN")
+        
+    except Exception as e:
+        print(f"\n✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    test_env()

@@ -1,6 +1,7 @@
-# Train: python main.py --train
-# Evaluate: python main.py --evaluate
-
+# Open mGBA
+   # Load Pokemon FireRed ROM
+   # Tools → Scripting → File → Load script → mgba_firered.lua
+# Run python train_model.py --train --algorithm DQN --timesteps 1000000
 
 
 

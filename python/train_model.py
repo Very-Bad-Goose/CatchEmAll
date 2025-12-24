@@ -3,7 +3,7 @@ import argparse
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
-from pokemon_env import PokemonFireRedEnv
+from pokemon_env import MGBAFireRedEnv  # Fixed import
 
 def train_model(algorithm="DQN", total_timesteps=1000000):
     """Train the Pokemon AI model."""
@@ -12,11 +12,22 @@ def train_model(algorithm="DQN", total_timesteps=1000000):
     os.makedirs("./models/checkpoints/", exist_ok=True)
     os.makedirs("./logs/", exist_ok=True)
     
+    print("="*60)
+    print(f"Starting training with {algorithm}")
+    print(f"Total timesteps: {total_timesteps:,}")
+    print("="*60)
+    print("\nMake sure mGBA is running with:")
+    print("1. Pokemon FireRed ROM loaded")
+    print("2. Lua script loaded (Tools → Scripting)")
+    print("3. Game started (not on main menu)")
+    print("="*60)
+    
     # Create the environment
-    env = PokemonFireRedEnv()
+    env = MGBAFireRedEnv()
     env = Monitor(env, "./logs/")
     
-    print(f"Training with {algorithm}...")
+    print(f"\n✓ Environment created")
+    print(f"Training with {algorithm}...\n")
     
     if algorithm == "DQN":
         model = DQN(
@@ -60,23 +71,33 @@ def train_model(algorithm="DQN", total_timesteps=1000000):
     
     # Start training
     print("Starting training...")
-    model.learn(
-        total_timesteps=total_timesteps,
-        callback=checkpoint_callback,
-        progress_bar=True
-    )
-    print("Training completed!")
+    print("Press Ctrl+C to stop early and save progress")
+    print("-"*60)
+    
+    try:
+        model.learn(
+            total_timesteps=total_timesteps,
+            callback=checkpoint_callback,
+            progress_bar=True
+        )
+        print("\n" + "="*60)
+        print("Training completed!")
+        print("="*60)
+    except KeyboardInterrupt:
+        print("\n" + "="*60)
+        print("Training interrupted by user")
+        print("="*60)
     
     # Save final model
     model_path = f"./models/pokemon_{algorithm.lower()}_final"
     model.save(model_path)
-    print(f"Model saved to {model_path}")
+    print(f"✓ Model saved to {model_path}")
     
     env.close()
 
 def evaluate_model(model_path, episodes=10):
     """Evaluate a trained model."""
-    env = PokemonFireRedEnv()
+    env = MGBAFireRedEnv()
     
     # Try to determine algorithm from filename
     if "ppo" in model_path.lower():
@@ -84,61 +105,68 @@ def evaluate_model(model_path, episodes=10):
     else:
         model = DQN.load(model_path)
     
+    print(f"Evaluating model: {model_path}")
+    print(f"Episodes: {episodes}")
+    print("-"*60)
+    
     total_rewards = []
     
     for episode in range(episodes):
-        obs = env.reset()
+        obs, info = env.reset()
         episode_reward = 0
         done = False
         steps = 0
         
         while not done and steps < 10000:
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, info = env.step(action)
+            obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
             steps += 1
-            env.render()
             
-            # Print interesting info
-            if info.get("battle_won"):
-                print(f"Battle won at step {steps}!")
-            if info.get("badge_earned"):
-                print(f"Badge earned! Total: {info['badges']}")
+            # Print interesting events
+            if info.get("badges", 0) > 0:
+                print(f"  Badges: {info['badges']}")
+            if reward > 10:
+                print(f"  Big reward: {reward:.1f}")
         
         total_rewards.append(episode_reward)
         print(f"Episode {episode + 1}/{episodes} - Reward: {episode_reward:.2f}, Steps: {steps}")
     
-    print(f"\nAverage reward: {sum(total_rewards)/len(total_rewards):.2f}")
+    print("-"*60)
+    print(f"Average reward: {sum(total_rewards)/len(total_rewards):.2f}")
+    print(f"Best reward: {max(total_rewards):.2f}")
+    print(f"Worst reward: {min(total_rewards):.2f}")
     env.close()
 
 def test_environment():
     """Test the environment setup."""
     print("Testing environment...")
-    env = PokemonFireRedEnv()
+    env = MGBAFireRedEnv()
     
-    obs = env.reset()
-    print(f"Observation shape: {obs.shape}")
-    print(f"Action space: {env.action_space}")
+    obs, info = env.reset()
+    print(f"✓ Observation shape: {obs.shape}")
+    print(f"✓ Action space: {env.action_space}")
+    print(f"✓ Initial info: {info}")
     
     print("\nTaking 20 random steps...")
     for i in range(20):
         action = env.action_space.sample()
-        obs, reward, done, info = env.step(action)
+        obs, reward, done, truncated, info = env.step(action)
         
-        print(f"Step {i+1}: Reward={reward:.2f}, In Battle={info.get('in_battle', False)}, "
-              f"Badges={info.get('badges', 0)}")
-        
-        env.render()
+        print(f"Step {i+1}: Action={env.actions[action]:<7} "
+              f"Reward={reward:>7.2f} "
+              f"HP={info['player_hp']:>3}/{info['player_hp_max']:<3} "
+              f"Badges={info['badges']}")
         
         if done:
             print("Episode ended, resetting...")
-            obs = env.reset()
+            obs, info = env.reset()
     
     env.close()
-    print("Environment test completed!")
+    print("\n✓ Environment test completed!")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Pokemon FireRed AI")
+    parser = argparse.ArgumentParser(description="Pokemon FireRed AI Training")
     parser.add_argument("--train", action="store_true", help="Train the model")
     parser.add_argument("--evaluate", action="store_true", help="Evaluate trained model")
     parser.add_argument("--test", action="store_true", help="Test environment")
@@ -161,3 +189,7 @@ if __name__ == "__main__":
         test_environment()
     else:
         print("Please specify: --train, --evaluate, or --test")
+        print("\nExamples:")
+        print("  python train_model.py --test")
+        print("  python train_model.py --train --algorithm DQN --timesteps 1000000")
+        print("  python train_model.py --evaluate --model-path ./models/pokemon_dqn_final")
