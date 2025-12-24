@@ -1,8 +1,10 @@
 -- mGBA Lua Script for Pokemon FireRed (Simplified)
 -- Uses file-based communication with Python
 
-local STATE_FILE = "C:/Users/joaquim.pedroza.VT/Downloads/CatchEmAll/mgba_state.txt"
-local ACTION_FILE = "C:/Users/joaquim.pedroza.VT/Downloads/CatchEmAll/mgba_action.txt"
+local IPC_DIR = "ipc/"
+local STATE_FILE = IPC_DIR .. "mgba_state.txt"
+local ACTION_FILE = IPC_DIR .. "mgba_action.txt"
+
 
 -- FireRed RAM addresses
 local PLAYER_HP_CUR = 0x02023D70
@@ -22,8 +24,8 @@ local function u16(addr)
 end
 
 -- Communication files
-local STATE_FILE = "mgba_state.txt"
-local ACTION_FILE = "mgba_action.txt"
+-- local STATE_FILE = "mgba_state.txt"
+-- local ACTION_FILE = "mgba_action.txt"
 
 -- Write state to file for Python to read
 local function write_state()

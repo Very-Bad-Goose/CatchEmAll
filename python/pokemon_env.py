@@ -9,38 +9,49 @@ import os
 
 class MGBAFireRedEnv(Env):
     """Pokemon FireRed environment using mGBA via file communication."""
-    
-    def __init__(self, state_file="mgba_state.txt", action_file="mgba_action.txt"):
+
+    # Resolve project root based on this file's location
+    PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+    IPC_DIR = os.path.join(PROJECT_ROOT, "ipc")
+
+    # Ensure IPC directory exists
+    os.makedirs(IPC_DIR, exist_ok=True)
+
+    def __init__(self):
         super().__init__()
-        
-        self.state_file = state_file
-        self.action_file = action_file
-        
+
+        # IPC file paths (relative to project root)
+        self.state_file = os.path.join(self.IPC_DIR, "mgba_state.txt")
+        self.action_file = os.path.join(self.IPC_DIR, "mgba_action.txt")
+
         # Observation space (stacked frames)
-        self.observation_space = Box(low=0, high=1, shape=(4, 84, 84), dtype=np.float32)
-        
+        self.observation_space = Box(
+            low=0, high=1, shape=(4, 84, 84), dtype=np.float32
+        )
+
         # Action space
         self.action_space = Discrete(9)
         self.actions = ["NONE", "A", "B", "UP", "DOWN", "LEFT", "RIGHT", "START", "SELECT"]
-        
+
         # Frame stack
         self.frame_stack = deque(maxlen=4)
-        
+
         # Tracking
         self.prev_state = None
         self.step_count = 0
-        
-        print("="*60)
+
+        print("=" * 60)
         print("mGBA FireRed Environment (File-based)")
-        print("="*60)
+        print("=" * 60)
         print("Waiting for mGBA to start...")
         print("1. Open mGBA")
         print("2. Load Pokemon FireRed ROM")
-        print("3. Tools → Scripting → File → Load mgba_firered.lua")
-        print("="*60)
-        
+        print("3. Tools → Scripting → File → Load pokemon_firered.lua")
+        print("=" * 60)
+
         # Wait for first state file
         self._wait_for_mgba()
+
     
     def _wait_for_mgba(self, timeout=30):
         """Wait for mGBA to create state file."""
