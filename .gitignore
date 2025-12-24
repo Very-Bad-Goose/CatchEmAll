@@ -7,3 +7,6 @@ mgba/
 # Spyder IDE project files
 .spyproject/
 
+# Pycache
+__pycache__/
+python/__pycache__
